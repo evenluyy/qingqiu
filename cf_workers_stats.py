@@ -1,19 +1,26 @@
 import requests
 import datetime
 import os
+import textwrap
 
-# === 从环境变量读取配置 ===
+# === 环境变量 ===
 ACCOUNT_IDS = [x.strip() for x in os.environ.get("CF_ACCOUNT_IDS", "").split(",") if x.strip()]
 API_TOKENS = [x.strip() for x in os.environ.get("CF_API_TOKENS", "").split(",") if x.strip()]
+USERNAMES = [x.strip() for x in os.environ.get("CF_USERNAMES", "").split(",") if x.strip()]
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_SPLIT_SEND = os.environ.get("TELEGRAM_SPLIT_SEND", "false").lower() == "true"
 DAYS = int(os.environ.get("DAYS", "7"))
 
+# === 校验 ===
 if len(ACCOUNT_IDS) != len(API_TOKENS):
-    raise ValueError("⚠️ CF_ACCOUNT_IDS 与 CF_API_TOKENS 数量不一致，请一一对应。")
+    raise ValueError("⚠️ CF_ACCOUNT_IDS 与 CF_API_TOKENS 数量必须一致。")
+
+if USERNAMES and len(USERNAMES) != len(ACCOUNT_IDS):
+    raise ValueError("⚠️ CF_USERNAMES 数量必须与 CF_ACCOUNT_IDS 一致（或留空）。")
 
 # === 时间范围 ===
-end_date = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+end_date = datetime.datetime.utcnow()  # 包含今天
 start_date = end_date - datetime.timedelta(days=DAYS)
 
 # === GraphQL 查询模板 ===
@@ -73,34 +80,61 @@ def fetch_account_stats(account_id, token):
 
     return daily_requests
 
-# === 汇总所有账号 ===
+
+# === 汇总 ===
 all_accounts_data = {}
 total_per_day = {}
 
-for acc_id, token in zip(ACCOUNT_IDS, API_TOKENS):
+for i, (acc_id, token) in enumerate(zip(ACCOUNT_IDS, API_TOKENS)):
+    username = USERNAMES[i] if i < len(USERNAMES) else acc_id
     stats = fetch_account_stats(acc_id, token)
-    all_accounts_data[acc_id] = stats
+    all_accounts_data[username] = stats
     for d, c in stats.items():
         total_per_day[d] = total_per_day.get(d, 0) + c
 
-# === 格式化输出 ===
-output_lines = ["📊 Cloudflare Workers 每日请求统计（多账号）\n"]
-for acc_id, stats in all_accounts_data.items():
-    output_lines.append(f"🧾 账号 {acc_id}:")
+
+# === 输出组装 ===
+def format_report(username, stats):
+    lines = [f"🧾 账号 {username}:"]
     for date, count in sorted(stats.items()):
-        output_lines.append(f"  {date}: {count:,} 次请求")
-    output_lines.append("")
+        lines.append(f"  {date}: {count:,} 次请求")
+    return "\n".join(lines)
 
-output_lines.append("📈 所有账号总计：")
+
+reports = []
+for username, stats in all_accounts_data.items():
+    reports.append(format_report(username, stats))
+
+summary_lines = ["📈 所有账号总计："]
 for date, count in sorted(total_per_day.items()):
-    output_lines.append(f"  {date}: {count:,} 次请求")
+    summary_lines.append(f"  {date}: {count:,} 次请求")
+summary_lines.append(f"\n✅ 合计（{DAYS}天）：{sum(total_per_day.values()):,} 次请求")
 
-output_lines.append(f"\n✅ 合计（{DAYS}天）：{sum(total_per_day.values()):,} 次请求")
+# === 输出到控制台 ===
+print("📊 Cloudflare Workers 每日请求统计（多账号）\n")
+print("\n\n".join(reports))
+print("\n".join(summary_lines))
 
-output_text = "\n".join(output_lines)
-print(output_text)
-
-# === 发送到 Telegram ===
-if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+# === Telegram 通知 ===
+def send_tg_message(text):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
     tg_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(tg_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": output_text})
+    requests.post(tg_url, json={
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "disable_web_page_preview": True
+    })
+
+# 发送逻辑
+if TELEGRAM_SPLIT_SEND:
+    # 每个账号单独发一条消息
+    for username, stats in all_accounts_data.items():
+        msg = f"📊 Cloudflare Workers 请求统计\n{format_report(username, stats)}"
+        send_tg_message(msg)
+    send_tg_message("\n".join(summary_lines))
+else:
+    # 一次性发送全部
+    msg = "📊 Cloudflare Workers 每日请求统计（多账号）\n\n" + \
+          "\n\n".join(reports) + "\n\n" + "\n".join(summary_lines)
+    send_tg_message(msg)
