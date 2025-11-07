@@ -111,7 +111,7 @@ for date, count in sorted(total_per_day.items()):
 summary_lines.append(f"\n✅ 合计（{DAYS}天）：{sum(total_per_day.values()):,} 次请求")
 
 # === 输出到控制台 ===
-print("📊 Cloudflare Workers 每日请求统计（多账号）\n")
+print("📊 cff 每日请求统计（多账号）\n")
 print("\n\n".join(reports))
 print("\n".join(summary_lines))
 
@@ -130,11 +130,11 @@ def send_tg_message(text):
 if TELEGRAM_SPLIT_SEND:
     # 每个账号单独发一条消息
     for username, stats in all_accounts_data.items():
-        msg = f"📊 Cloudflare Workers 请求统计\n{format_report(username, stats)}"
+        msg = f"📊 请求统计\n{format_report(username, stats)}"
         send_tg_message(msg)
     send_tg_message("\n".join(summary_lines))
 else:
     # 一次性发送全部
-    msg = "📊 Cloudflare Workers 每日请求统计（多账号）\n\n" + \
+    msg = "📊 每日请求统计（多账号）\n\n" + \
           "\n\n".join(reports) + "\n\n" + "\n".join(summary_lines)
     send_tg_message(msg)
