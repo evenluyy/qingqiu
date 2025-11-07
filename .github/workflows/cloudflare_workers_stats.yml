@@ -2,7 +2,7 @@ name: Workers Stats
 
 on:
   schedule:
-    - cron: "0 23 * * *"
+    - cron: "0 23 * * *"   # 每天 UTC+1 执行
   workflow_dispatch:
 
 jobs:
@@ -25,7 +25,9 @@ jobs:
         env:
           CF_ACCOUNT_IDS: ${{ secrets.CF_ACCOUNT_IDS }}
           CF_API_TOKENS: ${{ secrets.CF_API_TOKENS }}
+          CF_USERNAMES: ${{ secrets.CF_USERNAMES }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_SPLIT_SEND: ${{ secrets.TELEGRAM_SPLIT_SEND }}
           DAYS: 7
         run: python cf_workers_stats.py
