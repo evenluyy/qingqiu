@@ -2,8 +2,8 @@ name: Workers Stats
 
 on:
   schedule:
-    - cron: "0 23 * * *"   # 每天 UTC+1 执行，可按需调整
-  workflow_dispatch:       # 允许手动触发
+    - cron: "0 23 * * *"
+  workflow_dispatch:
 
 jobs:
   fetch-stats:
@@ -23,8 +23,8 @@ jobs:
 
       - name: Run Cloudflare Stats Script
         env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_ACCOUNT_IDS: ${{ secrets.CF_ACCOUNT_IDS }}
+          CF_API_TOKENS: ${{ secrets.CF_API_TOKENS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DAYS: 7
