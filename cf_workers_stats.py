@@ -9,7 +9,7 @@ USERNAMES = [x.strip() for x in os.environ.get("CF_USERNAMES", "").split(",") if
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TELEGRAM_SPLIT_SEND = os.environ.get("TELEGRAM_SPLIT_SEND", "false").lower() == "true"
-DAYS = int(os.environ.get("DAYS", "7"))
+DAYS = int(os.environ.get("DAYS", "2"))
 
 # === 校验 ===
 if len(ACCOUNT_IDS) != len(API_TOKENS):
