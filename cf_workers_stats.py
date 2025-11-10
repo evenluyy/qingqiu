@@ -1,7 +1,7 @@
 import requests
 import datetime
 import os
-
+import time
 # === 环境变量 ===
 ACCOUNT_IDS = [x.strip() for x in os.environ.get("CF_ACCOUNT_IDS", "").split(",") if x.strip()]
 API_TOKENS = [x.strip() for x in os.environ.get("CF_API_TOKENS", "").split(",") if x.strip()]
@@ -52,10 +52,11 @@ query getWorkersAndPagesMetrics($accountId: string!, $start: DateTime!, $end: Da
     }
   }
 }
-"""
 
-def fetch_account_stats(account_id, token):
-    """查询单个账号的 Workers + Pages 数据"""
+
+
+def fetch_account_stats(account_id, token, max_retries=3):
+    """查询单个账号的 Workers + Pages 数据（带容错重试）"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -66,44 +67,59 @@ def fetch_account_stats(account_id, token):
         "end": end_date.isoformat() + "Z"
     }
 
-    resp = requests.post(
-        "https://api.cloudflare.com/client/v4/graphql",
-        json={"query": graphql_query, "variables": variables},
-        headers=headers
-    )
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(
+                "https://api.cloudflare.com/client/v4/graphql",
+                json={"query": graphql_query, "variables": variables},
+                headers=headers,
+                timeout=30
+            )
 
-    if resp.status_code != 200:
-        raise Exception(f"请求失败 ({resp.status_code}): {resp.text}")
+            # 检查 HTTP 状态
+            if resp.status_code != 200:
+                raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
 
-    data = resp.json()["data"]["viewer"]["accounts"][0]
+            data = resp.json()
 
-    # Workers 数据
-    workers_data = data.get("workersInvocationsAdaptive", [])
-    workers_daily = {}
-    for i in workers_data:
-        date = i["dimensions"]["date"][:10]
-        count = i["sum"]["requests"] or 0
-        workers_daily[date] = workers_daily.get(date, 0) + count
+            # 检查 GraphQL 错误
+            if data.get("errors"):
+                raise Exception(f"GraphQL errors: {data['errors']}")
 
-    # Pages 数据
-    pages_data = data.get("pagesFunctionsInvocationsAdaptiveGroups", [])
-    pages_daily = {}
-    for i in pages_data:
-        date = i["dimensions"]["date"][:10]
-        count = i["sum"]["requests"] or 0
-        pages_daily[date] = pages_daily.get(date, 0) + count
+            viewer = data.get("data", {}).get("viewer")
+            if not viewer or not viewer.get("accounts"):
+                raise Exception("Cloudflare 返回空 data 或 accounts。")
 
-    # 合并总请求
-    combined_daily = {}
-    all_dates = set(workers_daily.keys()) | set(pages_daily.keys())
-    for d in all_dates:
-        combined_daily[d] = workers_daily.get(d, 0) + pages_daily.get(d, 0)
+            account_data = viewer["accounts"][0]
+            break  # ✅ 成功，跳出循环
 
-    return {
-        "workers": workers_daily,
-        "pages": pages_daily,
-        "combined": combined_daily
+        except Exception as e:
+            print(f"⚠️ 第 {attempt}/{max_retries} 次请求失败：{e}")
+            if attempt == max_retries:
+                raise
+            time.sleep(3 * attempt)  # 逐次延迟重试
+
+    # === 数据提取部分 ===
+    workers_data = account_data.get("workersInvocationsAdaptive", [])
+    pages_data = account_data.get("pagesFunctionsInvocationsAdaptiveGroups", [])
+
+    def daily_sum(items):
+        result = {}
+        for i in items:
+            date = i["dimensions"]["date"][:10]
+            result[date] = result.get(date, 0) + (i["sum"]["requests"] or 0)
+        return result
+
+    workers_daily = daily_sum(workers_data)
+    pages_daily = daily_sum(pages_data)
+
+    combined_daily = {
+        d: workers_daily.get(d, 0) + pages_daily.get(d, 0)
+        for d in set(workers_daily) | set(pages_daily)
     }
+
+    return {"workers": workers_daily, "pages": pages_daily, "combined": combined_daily}
+
 
 # === 汇总 ===
 all_accounts_data = {}
