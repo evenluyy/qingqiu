@@ -52,7 +52,7 @@ query getWorkersAndPagesMetrics($accountId: string!, $start: DateTime!, $end: Da
     }
   }
 }
-
+"""
 
 
 def fetch_account_stats(account_id, token, max_retries=3):
