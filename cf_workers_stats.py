@@ -56,7 +56,7 @@ query getWorkersAndPagesMetrics($accountId: string!, $start: DateTime!, $end: Da
 
 
 def fetch_account_stats(account_id, token, max_retries=3):
-    """查询单个账号的 Workers + Pages 数据（带容错重试）"""
+    
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
