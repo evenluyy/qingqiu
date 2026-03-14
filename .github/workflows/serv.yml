@@ -2,8 +2,8 @@ name: Serv00 Cron Keeper
 
 on:
   schedule:
-    - cron: '*/43 * * * *'  # 每10分钟运行一次
-  workflow_dispatch:  # 支持手动触发
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 
 jobs:
   check-and-repair:
@@ -27,17 +27,42 @@ jobs:
           
           echo "🔍 检查 Cron 任务状态..."
           
-          # 检查任务是否存在
-          CHECK_RESULT=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -l 2>/dev/null | grep '${CRON_KEYWORD}'" 2>&1)
+          # 修复：先获取 crontab 内容，不检查退出码
+          # 2>&1 将错误输出也捕获，防止脚本因错误退出
+          CRONTAB_CONTENT=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -l 2>&1")
+          SSH_EXIT_CODE=$?
           
-          if [ $? -eq 0 ] && [ -n "$CHECK_RESULT" ]; then
-            echo "✅ 任务存在，无需操作"
+          echo "SSH 退出码: $SSH_EXIT_CODE"
+          
+          # 判断是否有任务被删除的情况
+          # 如果 crontab -l 返回 "no crontab for username" 或者内容为空
+          if echo "$CRONTAB_CONTENT" | grep -q "no crontab for"; then
+            echo "📭 Crontab 为空（没有任何任务）"
+            HAS_TASK=false
+          elif echo "$CRONTAB_CONTENT" | grep -q "$CRON_KEYWORD"; then
+            echo "✅ 任务存在"
+            HAS_TASK=true
+          else
+            echo "❌ 任务不存在（crontab 有其他任务，但没有我们的目标任务）"
+            HAS_TASK=false
+          fi
+          
+          # 根据检查结果执行操作
+          if [ "$HAS_TASK" = true ]; then
             echo "status=exists" >> $GITHUB_OUTPUT
           else
             echo "❌ 任务丢失，正在重建..."
             
-            # 重建任务
-            sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "(crontab -l 2>/dev/null; echo '${CRON_LINE}') | crontab -"
+            # 获取现有 crontab 内容（如果有的话）
+            # 如果 crontab -l 返回 "no crontab for username"，则 EXISTING_CRON 为空
+            EXISTING_CRON=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -l 2>/dev/null || true")
+            
+            # 创建新 crontab 内容
+            NEW_CRON_CONTENT="${EXISTING_CRON}
+${CRON_LINE}"
+            
+            # 通过 echo 管道的方式写入 crontab
+            echo "$NEW_CRON_CONTENT" | sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -"
             
             if [ $? -eq 0 ]; then
               echo "✅ 重建成功"
@@ -47,6 +72,10 @@ jobs:
               echo "status=failed" >> $GITHUB_OUTPUT
             fi
           fi
+          
+          # 显示最终状态（调试用）
+          echo "最终 crontab 内容:"
+          sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -l 2>&1"
 
       - name: Send Telegram Notification
         if: steps.check_cron.outputs.status != 'exists'
