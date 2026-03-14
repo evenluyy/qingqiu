@@ -3,11 +3,13 @@ name: Serv00 Cron Keeper
 on:
   schedule:
     - cron: '*/33 * * * *'
+    - cron: '0 8 19 * *' 
   workflow_dispatch:
 
 jobs:
   check-and-repair:
     name: 检查并修复 Cron 任务
+    if: github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Install sshpass
@@ -100,3 +102,25 @@ jobs:
             -d "text=${MESSAGE}" \
             -d "parse_mode=Markdown" \
             -o /dev/null
+  keep-alive:
+       name: 保持仓库活跃
+       if: github.event.schedule == '0 0 */25 * *' || github.event_name == 'workflow_dispatch'
+       runs-on: ubuntu-latest
+       permissions:
+         contents: write
+       steps:
+       - name: Checkout repository
+         uses: actions/checkout@v4
+         with:
+           fetch-depth: 0
+          
+       - name: Configure Git
+         run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+       - name: Make empty commit
+         run: |
+          git commit --allow-empty -m "chore: keep-alive commit $(date +'%Y-%m-%d')"
+          git push origin main
+          echo "✅ 已创建并推送空提交，仓库保持活跃"
