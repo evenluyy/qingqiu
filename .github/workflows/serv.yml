@@ -3,8 +3,7 @@ name: Serv00 Cron Keeper
 # 触发条件
 on:
   schedule:
-    # ┌─ 每10分钟运行一次 (分钟: */10, 小时: *, 日: *, 月: *, 星期: *)
-    - cron: '*/10 * * * *'
+    - cron: '*/43 * * * *'  # 每10分钟运行一次
   workflow_dispatch:  # 支持手动触发
 
 jobs:
@@ -12,104 +11,99 @@ jobs:
     name: 检查并修复 Cron 任务
     runs-on: ubuntu-latest
     steps:
-      # 1. 检出仓库 (虽然这里没用到本地文件，但有些action需要)
+      # 1. 检出仓库
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      # 2. 安装 sshpass (用于非交互式SSH登录)
+      # 2. 安装 sshpass
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      # 3. 执行检查与修复逻辑
+      # 3. 执行检查与修复逻辑（所有配置从 Secrets 读取）
       - name: Execute Cron Check
         id: check_cron
+        env:
+          # 从 GitHub Secrets 读取所有配置
+          SSH_HOST: ${{ secrets.SERV00_HOST }}
+          SSH_USER: ${{ secrets.SERV00_USER }}
+          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
+          CRON_KEYWORD: ${{ secrets.CRON_KEYWORD }}
+          CRON_LINE: ${{ secrets.CRON_LINE }}
         run: |
-          # ==================== 配置区域 ====================
-          HOST="s14.serv00.com"  # 你的SSH地址
-          USER="evenjj"       # 你的SSH用户名
-          KEYWORD="qd.evenjj.serv00.net"  # 用于判断任务是否存在的唯一关键词
-          CRON_LINE="*/7 * * * * http://qd.evenjj.serv00.net/do.php"  # 要添加的完整任务
-          # =================================================
+          # 验证必要的环境变量是否存在
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PASS" ] || [ -z "$CRON_KEYWORD" ] || [ -z "$CRON_LINE" ]; then
+            echo "❌ 错误: 必要的环境变量未设置"
+            echo "请检查以下 Secrets 是否都已配置:"
+            echo "  - SERV00_HOST"
+            echo "  - SERV00_USER"
+            echo "  - SERV00_PASSWORD"
+            echo "  - CRON_KEYWORD"
+            echo "  - CRON_LINE"
+            exit 1
+          fi
           
-          # 设置SSH密码环境变量(从GitHub Secrets读取)
-          export SSHPASS="${{ secrets.SSH_PASSWORD }}"
+          echo "🔍 正在检查 Cron 任务状态..."
+          echo "主机: $SSH_HOST"
+          echo "用户: $SSH_USER"
+          echo "关键词: $CRON_KEYWORD"
           
-          echo "🔍 正在检查Cron任务状态..."
-          
-          # 通过sshpass登录，列出当前cron任务并搜索关键词
+          # 通过 sshpass 登录，列出当前 cron 任务并搜索关键词
           # -o StrictHostKeyChecking=no 避免首次连接提示
-          CHECK_RESULT=$(sshpass -e ssh -o StrictHostKeyChecking=no ${USER}@${HOST} "crontab -l 2>/dev/null | grep '${KEYWORD}'" 2>&1)
+          # -o ConnectTimeout=10 设置连接超时时间
+          CHECK_RESULT=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -l 2>/dev/null | grep '${CRON_KEYWORD}'" 2>&1)
           EXIT_CODE=$?
           
           if [ $EXIT_CODE -eq 0 ] && [ -n "$CHECK_RESULT" ]; then
-            echo "✅ Cron任务存在，一切正常"
+            echo "✅ Cron 任务存在，一切正常"
             echo "status=exists" >> $GITHUB_OUTPUT
           else
-            echo "❌ Cron任务丢失，尝试重建..."
+            echo "❌ Cron 任务丢失，尝试重建..."
             
             # 重建任务：先获取现有任务(忽略错误)，再追加新任务，最后重新导入
             RECONSTRUCT_CMD="(crontab -l 2>/dev/null; echo '${CRON_LINE}') | crontab -"
-            sshpass -e ssh -o StrictHostKeyChecking=no ${USER}@${HOST} "${RECONSTRUCT_CMD}"
+            sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "${RECONSTRUCT_CMD}"
             
             if [ $? -eq 0 ]; then
               echo "✅ 任务重建成功"
               echo "status=repaired" >> $GITHUB_OUTPUT
+              echo "repaired_line=$CRON_LINE" >> $GITHUB_OUTPUT
             else
               echo "❌ 任务重建失败"
               echo "status=failed" >> $GITHUB_OUTPUT
             fi
           fi
 
-      # 4. 发送Telegram通知（仅当任务被修复或失败时）
-      - name: Send Telegram Notification
-        if: steps.check_cron.outputs.status != 'exists'  # 只有非"存在"状态才发送
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          format: markdown
-          message: |
-            🤖 **Serv00 Cron 监控通知**
-            
-            {{if eq .Status "repaired"}}
-            ✅ **状态**: 任务已自动修复
-            🕒 时间: `${{ github.event.repository.updated_at }}`
-            🛠️ 任务内容: `*/7 * * * * http://qd.evenjj.serv00.net/do.php`
-            {{else if eq .Status "failed"}}
-            ❌ **状态**: 修复失败，请手动检查
-            🚨 请登录 Serv00 查看 crontab 状态
-            {{end}}
-            
-            [查看运行日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          # 注意：上面使用了简单的条件判断，实际telegram-action的message不支持复杂模板
-          # 简化起见，直接用两个不同的step，或者用简单的文本拼接
-          
-      # 简化版：分开两个通知步骤更清晰
+      # 4. 发送修复成功通知
       - name: Send Repair Success Notification
         if: steps.check_cron.outputs.status == 'repaired'
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          format: markdown
-          message: |
-            ✅ **Serv00 Cron 自动修复成功**
-            
-            🕒 检测时间: `$(date -u +'%Y-%m-%d %H:%M:%S UTC')`
-            📋 任务内容: `*/7 * * * * http://qd.evenjj.serv00.net/do.php`
-            
-            [查看运行日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-      
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CRON_LINE: ${{ secrets.CRON_LINE }}
+        run: |
+          CURRENT_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          MESSAGE="✅ *Serv00 Cron 自动修复成功*%0A%0A🕒 检测时间: \`$CURRENT_TIME\`%0A📋 任务内容: \`$CRON_LINE\`%0A%0A[查看运行日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=${MESSAGE}" \
+            -d "parse_mode=Markdown"
+          
+          echo "📨 修复成功通知已发送"
+
+      # 5. 发送修复失败通知
       - name: Send Repair Failure Notification
         if: steps.check_cron.outputs.status == 'failed'
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          format: markdown
-          message: |
-            ❌ **Serv00 Cron 修复失败**
-            
-            🚨 请立即登录 Serv00 手动检查 crontab 状态
-            
-            [查看运行日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          CURRENT_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          MESSAGE="❌ *Serv00 Cron 修复失败*%0A%0A🕒 检测时间: \`$CURRENT_TIME\`%0A🚨 请立即登录 Serv00 手动检查 crontab 状态%0A%0A[查看运行日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=${MESSAGE}" \
+            -d "parse_mode=Markdown"
+          
+          echo "📨 修复失败通知已发送"
