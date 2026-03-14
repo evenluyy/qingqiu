@@ -58,8 +58,7 @@ jobs:
             EXISTING_CRON=$(sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -l 2>/dev/null || true")
             
             # 创建新 crontab 内容
-            NEW_CRON_CONTENT="${EXISTING_CRON}
-${CRON_LINE}"
+            NEW_CRON_CONTENT="${EXISTING_CRON}${CRON_LINE}"
             
             # 通过 echo 管道的方式写入 crontab
             echo "$NEW_CRON_CONTENT" | sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${SSH_HOST} "crontab -"
