@@ -2,7 +2,7 @@ name: Serv00 Cron Keeper
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/33 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -79,7 +79,7 @@ jobs:
       - name: Send Telegram Notification
         if: steps.check_cron.outputs.status != 'exists'
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CRON_LINE: ${{ secrets.CRON_LINE }}
           STATUS: ${{ steps.check_cron.outputs.status }}
