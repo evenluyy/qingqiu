@@ -87,13 +87,13 @@ jobs:
           CURRENT_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
           
           if [ "$STATUS" = "repaired" ]; then
-            MESSAGE="✅ *Serv00 Cron 自动修复成功*%0A%0A🕒 时间: \`$CURRENT_TIME\`%0A📋 任务: \`$CRON_LINE\`"
+            MESSAGE="✅ *Serv00 Cron 自动修复成功*%0A%0A🕒 时间: \`$CURRENT_TIME\`%0A"
           else
             MESSAGE="❌ *Serv00 Cron 修复失败*%0A%0A🕒 时间: \`$CURRENT_TIME\`%0A🚨 请手动检查 Serv00"
           fi
           
           # 添加日志链接
-          MESSAGE="${MESSAGE}%0A%0A[查看日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          # MESSAGE="${MESSAGE}%0A%0A[查看日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
