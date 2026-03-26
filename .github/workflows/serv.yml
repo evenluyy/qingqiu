@@ -10,7 +10,7 @@ env:
 jobs:
   check-and-repair:
     name: 检查并修复 Cron 任务
-    if: github.event.schedule == '12 */1 * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '12 09 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Install sshpass
