@@ -1,0 +1,133 @@
+name: Convert Loyalsoldier Rules to sing-box SRS
+
+on:
+  schedule:
+    # 每周一早上8点自动运行
+    - cron: '0 8 * * 1'
+  workflow_dispatch:  # 支持手动触发
+  push:
+    paths:
+      - '.github/workflows/convert-rules.yml'
+
+env:
+  RULES_REPO: "https://github.com/Loyalsoldier/clash-rules.git"
+  GEOIP_REPO: "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/geoip.conf"
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install conversion tools
+        run: |
+          go install github.com/solanab/sing-rules-converter@latest
+          go install github.com/runetfreedom/geodat2srs@latest
+
+      - name: Create working directories
+        run: |
+          mkdir -p ./tmp/rules
+          mkdir -p ./output
+
+      - name: Clone clash-rules repository
+        run: |
+          git clone --depth 1 ${{ env.RULES_REPO }} ./tmp/clash-rules
+
+      - name: Extract domain rules
+        run: |
+          # telegram_domain
+          cp ./tmp/clash-rules/rules/telegram.txt ./tmp/rules/telegram_domain.list
+          
+          # openai
+          cp ./tmp/clash-rules/rules/openai.txt ./tmp/rules/openai.list
+          
+          # geosite-cn (使用 cn 规则)
+          cp ./tmp/clash-rules/rules/cn.txt ./tmp/rules/geosite-cn.list
+          
+          # geosite-tiktok
+          cp ./tmp/clash-rules/rules/tiktok.txt ./tmp/rules/geosite-tiktok.list
+          
+          # geolocation-!cn (非中国域名，使用 proxy 规则)
+          cp ./tmp/clash-rules/rules/proxy.txt ./tmp/rules/geolocation-!cn.list
+          
+          echo "Domain rules extracted successfully"
+
+      - name: Extract IP rules from geoip.conf
+        run: |
+          # 下载 geoip.conf
+          wget -q ${{ env.GEOIP_REPO }} -O ./tmp/geoip.conf
+          
+          # 提取 telegram IP (telegram_ip)
+          sed -n '/^telegram:/,/^$/p' ./tmp/geoip.conf | \
+            grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?' > ./tmp/rules/telegram_ip.list
+          
+          # 提取中国 IP (geoip-cn)
+          sed -n '/^cn:/,/^$/p' ./tmp/geoip.conf | \
+            grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?' > ./tmp/rules/geoip-cn.list
+          
+          echo "IP rules extracted successfully"
+
+      - name: Convert domain rules to SRS
+        run: |
+          cd ./tmp/rules
+          for file in *.list; do
+            if [ -s "$file" ]; then
+              echo "Converting: $file"
+              sing-rules-converter "$file" -o "../../output/${file%.list}" -m
+            else
+              echo "Warning: $file is empty, skipping"
+            fi
+          done
+
+      - name: Download and convert GeoDat files (Optional)
+        run: |
+          # 下载完整的 dat 文件作为备用/更完整的版本
+          wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/raw/release/geoip.dat -O ./tmp/geoip.dat
+          wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/raw/release/geosite.dat -O ./tmp/geosite.dat
+          
+          # 转换为更完整的 SRS 版本（添加 _full 后缀区分）
+          geodat2srs geoip -i ./tmp/geoip.dat -o ./output/geoip-cn_full --prefix "geoip-"
+          geodat2srs geosite -i ./tmp/geosite.dat -o ./output/geosite-cn_full --prefix "geosite-"
+          
+          echo "GeoDat conversion completed"
+
+      - name: List generated files
+        run: |
+          echo "=== Generated SRS files ==="
+          ls -la ./output/*.srs 2>/dev/null || echo "No SRS files found"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: singbox-rules-srs
+          path: ./output/*.srs
+          retention-days: 30
+
+      - name: Create Release (Optional)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: rules-${{ github.run_number }}
+          name: "Rule Update - ${{ github.run_number }}"
+          body: |
+            Auto-generated sing-box SRS rules from Loyalsoldier sources
+            
+            **Rules included:**
+            - telegram_domain.srs
+            - telegram_ip.srs
+            - geolocation-!cn.srs
+            - openai.srs
+            - geosite-cn.srs
+            - geoip-cn.srs
+            - geosite-tiktok.srs
+            - geoip-cn_full.srs (完整版)
+            - geosite-cn_full.srs (完整版)
+          files: |
+            ./output/*.srs
