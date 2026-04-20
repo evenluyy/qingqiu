@@ -2,12 +2,9 @@ name: Convert Loyalsoldier Rules to sing-box SRS
 
 on:
   schedule:
-    # 每周一早上8点自动运行
     - cron: '0 8 * * 1'
-  workflow_dispatch:  # 支持手动触发
-  push:
-    paths:
-      - '.github/workflows/convert-rules.yml'
+  workflow_dispatch:
+  
 
 env:
   RULES_REPO: "https://github.com/Loyalsoldier/clash-rules.git"
@@ -24,12 +21,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.23'
 
-      - name: Install conversion tools
+      - name: Install sing-box
         run: |
-          go install github.com/solanab/sing-rules-converter@latest
-          go install github.com/runetfreedom/geodat2srs@latest
+          # 安装 sing-box，它自带 rule-set 编译功能
+          go install github.com/sagernet/sing-box/cmd/sing-box@latest
 
       - name: Create working directories
         run: |
@@ -40,22 +37,22 @@ jobs:
         run: |
           git clone --depth 1 ${{ env.RULES_REPO }} ./tmp/clash-rules
 
-      - name: Extract domain rules
+      - name: Extract domain rules (text format)
         run: |
           # telegram_domain
-          cp ./tmp/clash-rules/rules/telegram.txt ./tmp/rules/telegram_domain.list
+          cp ./tmp/clash-rules/rules/telegram.txt ./tmp/rules/telegram_domain.txt
           
           # openai
-          cp ./tmp/clash-rules/rules/openai.txt ./tmp/rules/openai.list
+          cp ./tmp/clash-rules/rules/openai.txt ./tmp/rules/openai.txt
           
           # geosite-cn (使用 cn 规则)
-          cp ./tmp/clash-rules/rules/cn.txt ./tmp/rules/geosite-cn.list
+          cp ./tmp/clash-rules/rules/cn.txt ./tmp/rules/geosite-cn.txt
           
           # geosite-tiktok
-          cp ./tmp/clash-rules/rules/tiktok.txt ./tmp/rules/geosite-tiktok.list
+          cp ./tmp/clash-rules/rules/tiktok.txt ./tmp/rules/geosite-tiktok.txt
           
           # geolocation-!cn (非中国域名，使用 proxy 规则)
-          cp ./tmp/clash-rules/rules/proxy.txt ./tmp/rules/geolocation-!cn.list
+          cp ./tmp/clash-rules/rules/proxy.txt ./tmp/rules/geolocation-!cn.txt
           
           echo "Domain rules extracted successfully"
 
@@ -66,37 +63,155 @@ jobs:
           
           # 提取 telegram IP (telegram_ip)
           sed -n '/^telegram:/,/^$/p' ./tmp/geoip.conf | \
-            grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?' > ./tmp/rules/telegram_ip.list
+            grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?' > ./tmp/rules/telegram_ip.txt
           
           # 提取中国 IP (geoip-cn)
           sed -n '/^cn:/,/^$/p' ./tmp/geoip.conf | \
-            grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?' > ./tmp/rules/geoip-cn.list
+            grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}(\/[0-9]{1,2})?' > ./tmp/rules/geoip-cn.txt
           
           echo "IP rules extracted successfully"
 
-      - name: Convert domain rules to SRS
+      - name: Convert text rules to SRS using sing-box
         run: |
           cd ./tmp/rules
-          for file in *.list; do
+          
+          # 转换所有 .txt 文件为 .srs
+          for file in *.txt; do
             if [ -s "$file" ]; then
               echo "Converting: $file"
-              sing-rules-converter "$file" -o "../../output/${file%.list}" -m
+              # 创建 rule-set 配置文件
+              cat > "./${file%.txt}.json" << EOF
+{
+  "version": 1,
+  "rules": [
+    {
+      "domain_suffix": $(jq -R -s -c 'split("\n") | map(select(length>0))' "../$file")
+    }
+  ]
+}
+EOF
+              # 使用 sing-box 编译 rule-set
+              sing-box rule-set compile "./${file%.txt}.json" -o "../../output/${file%.txt}.srs"
             else
               echo "Warning: $file is empty, skipping"
             fi
           done
 
-      - name: Download and convert GeoDat files (Optional)
+      - name: Convert IP rules specifically
         run: |
-          # 下载完整的 dat 文件作为备用/更完整的版本
-          wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/raw/release/geoip.dat -O ./tmp/geoip.dat
-          wget -q https://github.com/Loyalsoldier/v2ray-rules-dat/raw/release/geosite.dat -O ./tmp/geosite.dat
+          cd ./tmp/rules
           
-          # 转换为更完整的 SRS 版本（添加 _full 后缀区分）
-          geodat2srs geoip -i ./tmp/geoip.dat -o ./output/geoip-cn_full --prefix "geoip-"
-          geodat2srs geosite -i ./tmp/geosite.dat -o ./output/geosite-cn_full --prefix "geosite-"
+          # 转换 IP 规则（telegram_ip）
+          if [ -s "telegram_ip.txt" ]; then
+            cat > "telegram_ip.json" << EOF
+{
+  "version": 1,
+  "rules": [
+    {
+      "ip_cidr": $(jq -R -s -c 'split("\n") | map(select(length>0))' telegram_ip.txt)
+    }
+  ]
+}
+EOF
+            sing-box rule-set compile "telegram_ip.json" -o "../../output/telegram_ip.srs"
+          fi
           
-          echo "GeoDat conversion completed"
+          # 转换 IP 规则（geoip-cn）
+          if [ -s "geoip-cn.txt" ]; then
+            cat > "geoip-cn.json" << EOF
+{
+  "version": 1,
+  "rules": [
+    {
+      "ip_cidr": $(jq -R -s -c 'split("\n") | map(select(length>0))' geoip-cn.txt)
+    }
+  ]
+}
+EOF
+            sing-box rule-set compile "geoip-cn.json" -o "../../output/geoip-cn.srs"
+          fi
+
+      - name: Alternative - Use Python converter (more reliable)
+        run: |
+          # 使用 Python 脚本转换（更稳定）
+          pip install pyyaml
+          
+          cat > ./tmp/convert_to_srs.py << 'EOF'
+import re
+import json
+import subprocess
+from pathlib import Path
+
+def convert_txt_to_srs(txt_file, srs_file, rule_type="domain"):
+    """Convert txt rule file to sing-box srs format"""
+    
+    with open(txt_file, 'r') as f:
+        lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+    
+    if not lines:
+        print(f"Skipping {txt_file} - empty")
+        return False
+    
+    if rule_type == "domain":
+        # 检测域名格式（是否包含通配符）
+        rules = []
+        for line in lines:
+            if line.startswith('+.'):
+                rules.append({"domain_suffix": line[2:]})
+            elif line.startswith('.'):
+                rules.append({"domain_suffix": line[1:]})
+            elif '*' in line:
+                rules.append({"domain_keyword": line.replace('*', '')})
+            else:
+                rules.append({"domain": line})
+    else:  # ip
+        rules = [{"ip_cidr": line} for line in lines]
+    
+    rule_set = {
+        "version": 1,
+        "rules": rules
+    }
+    
+    with open('temp_rule.json', 'w') as f:
+        json.dump(rule_set, f, indent=2)
+    
+    # 使用 sing-box 编译
+    result = subprocess.run(
+        ['sing-box', 'rule-set', 'compile', 'temp_rule.json', '-o', srs_file],
+        capture_output=True, text=True
+    )
+    
+    if result.returncode != 0:
+        print(f"Error converting {txt_file}: {result.stderr}")
+        return False
+    
+    print(f"Successfully converted {txt_file} -> {srs_file}")
+    return True
+
+# 转换域名规则
+domain_rules = [
+    ('telegram_domain.txt', 'telegram_domain.srs', 'domain'),
+    ('openai.txt', 'openai.srs', 'domain'),
+    ('geosite-cn.txt', 'geosite-cn.srs', 'domain'),
+    ('geosite-tiktok.txt', 'geosite-tiktok.srs', 'domain'),
+    ('geolocation-!cn.txt', 'geolocation-!cn.srs', 'domain'),
+]
+
+# 转换 IP 规则
+ip_rules = [
+    ('telegram_ip.txt', 'telegram_ip.srs', 'ip'),
+    ('geoip-cn.txt', 'geoip-cn.srs', 'ip'),
+]
+
+for txt_file, srs_file, rule_type in domain_rules + ip_rules:
+    txt_path = Path('./tmp/rules') / txt_file
+    if txt_path.exists():
+        convert_txt_to_srs(txt_path, Path('./output') / srs_file, rule_type)
+    else:
+        print(f"Warning: {txt_file} not found")
+EOF
+          
+          python3 ./tmp/convert_to_srs.py
 
       - name: List generated files
         run: |
@@ -110,7 +225,7 @@ jobs:
           path: ./output/*.srs
           retention-days: 30
 
-      - name: Create Release (Optional)
+      - name: Create Release
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v1
         with:
@@ -127,7 +242,5 @@ jobs:
             - geosite-cn.srs
             - geoip-cn.srs
             - geosite-tiktok.srs
-            - geoip-cn_full.srs (完整版)
-            - geosite-cn_full.srs (完整版)
           files: |
             ./output/*.srs
