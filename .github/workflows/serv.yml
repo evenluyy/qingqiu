@@ -112,7 +112,7 @@ jobs:
           
   keep-alive:
        name: 保持仓库活跃
-       if: github.event.schedule == '0 0 */25 * *' || github.event_name == 'workflow_dispatch'
+       if: github.event.schedule == '0 8 19 * *' || github.event_name == 'workflow_dispatch'
        runs-on: ubuntu-latest
        permissions:
          contents: write
