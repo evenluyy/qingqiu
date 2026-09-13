@@ -1,4 +1,4 @@
-name: 9ywright)
+name: 9ywright
 
 on:
   push:
@@ -34,6 +34,7 @@ jobs:
 
       # 4. 用 Chromium 打开网页、记录结果并截图
       - name: 打开目标网页并截图
+        continue-on-error: true     # ← 让它失败也不阻断后续非 always 步骤
         env:
           TEST_URL: "https://www.95598.cn/osgweb/login"
           TZ: "Asia/Shanghai"
@@ -132,23 +133,26 @@ jobs:
               (result.error ? `| 错误 | ${result.error} |\n` : '')
             );
 
-            // 失败时让该步骤失败（后续仍会用 if: always() 上传截图）
+            // 失败时让该步骤失败（后续仍会用 if: always() 上传截图/诊断）
             if (!result.success) {
               process.exit(1);
             }
           })();
           EOF
+
+      # 5. 诊断：curl 直连对比（无论前面成败都执行）
       - name: 诊断：curl 直连对比
+        if: always()                # ← 关键：不被前面的失败阻断
         run: |
-         echo "--- 跟随重定向的响应头 ---"
-         curl -sIL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0" \
-          --max-time 30 https://www.95598.cn/osgweb/login | head -50
+          echo "--- 跟随重定向的响应头 ---"
+          curl -sIL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0" \
+            --max-time 30 https://www.95598.cn/osgweb/login | head -50
           echo "--- 最终 HTTP 状态码 ---"
           curl -s -o /dev/null -w "%{http_code}\n" \
-          -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0" \
-          --max-time 30 https://www.95598.cn/osgweb/login
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0" \
+            --max-time 30 https://www.95598.cn/osgweb/login
 
-      # 5. 无论成败都把截图和测试报告提交回仓库
+      # 6. 无论成败都把截图和测试报告提交回仓库
       - name: 上传截图到仓库
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -158,7 +162,7 @@ jobs:
           commit_user_name: "github-actions[bot]"
           commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # 6. 若页面打开失败，让整个 Workflow 标红告警
+      # 7. 若页面打开失败，让整个 Workflow 标红告警
       - name: 检查测试是否通过
         if: always()
         run: |
