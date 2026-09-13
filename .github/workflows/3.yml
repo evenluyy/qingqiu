@@ -1,0 +1,163 @@
+name: 9ywright)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:          # 支持手动触发
+
+jobs:
+  playwright-screenshot:
+    name: 用 Chrome(Playwright) 打开登录页并截图上传
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # 允许把截图提交回仓库
+
+    steps:
+      # 1. 检出仓库
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 安装 Node.js
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 3. 安装 Playwright 及 Chromium 浏览器
+      - name: 安装 Playwright + Chromium
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium --with-deps
+
+      # 4. 用 Chromium 打开网页、记录结果并截图
+      - name: 打开目标网页并截图
+        env:
+          TEST_URL: "https://www.95598.cn/osgweb/login"
+          TZ: "Asia/Shanghai"
+        run: |
+          node <<'EOF'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+          const path = require('path');
+
+          (async () => {
+            const url = process.env.TEST_URL;
+
+            const result = {
+              url: url,
+              time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+              success: false,
+              title: null,
+              statusCode: null,
+              error: null,
+              screenshot: null
+            };
+
+            let browser = null;
+            let page = null;
+
+            try {
+              // 启动 Chromium（Playwright 自带的浏览器由上面 install 步骤下载）
+              browser = await chromium.launch({ headless: true });
+
+              const context = await browser.newContext({
+                viewport: { width: 1366, height: 900 },
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+                           'AppleWebKit/537.36 (KHTML, like Gecko) ' +
+                           'Chrome/124.0.0.0 Safari/537.36'
+              });
+
+              page = await context.newPage();
+
+              // 打开目标页面
+              const response = await page.goto(url, {
+                waitUntil: 'domcontentloaded',
+                timeout: 90000
+              });
+
+              // 等待页面内容渲染完成
+              await page.waitForTimeout(5000);
+
+              result.statusCode = response ? response.status() : null;
+              result.title = await page.title();
+              const contentLength = (await page.content()).length;
+
+              // 判断：HTTP 状态码 2xx/3xx 且页面有内容 => 视为成功打开
+              result.success = (
+                result.statusCode !== null &&
+                result.statusCode >= 200 &&
+                result.statusCode < 400 &&
+                contentLength > 0
+              );
+              result.contentLength = contentLength;
+            } catch (e) {
+              result.error = e.message;
+            }
+
+            // 无论成败都截图（失败时也能留下现场）
+            if (browser && page) {
+              try {
+                fs.mkdirSync(path.join(process.cwd(), 'screenshots'), { recursive: true });
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                const filename = `screenshots/95598-login-${ts}.png`;
+                await page.screenshot({ path: filename, fullPage: true });
+                result.screenshot = filename;
+              } catch (e) {
+                result.screenshotError = e.message;
+              }
+            }
+
+            if (browser) {
+              await browser.close();
+            }
+
+            // 输出测试报告
+            console.log('================ 测试结果 ================');
+            console.log(JSON.stringify(result, null, 2));
+            fs.writeFileSync('test-result.json', JSON.stringify(result, null, 2));
+
+            // 写入 GitHub 步骤摘要
+            fs.appendFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `## 95598 登录页测试结果\n\n` +
+              `| 项目 | 值 |\n|---|---|\n` +
+              `| URL | \`${result.url}\` |\n` +
+              `| 状态码 | ${result.statusCode ?? '无'} |\n` +
+              `| 页面标题 | ${result.title ?? '无'} |\n` +
+              `| 结果 | ${result.success ? '✅ 打开成功' : '❌ 打开失败'} |\n` +
+              (result.screenshot ? `| 截图 | ${result.screenshot} |\n` : '') +
+              (result.error ? `| 错误 | ${result.error} |\n` : '')
+            );
+
+            // 失败时让该步骤失败（后续仍会用 if: always() 上传截图）
+            if (!result.success) {
+              process.exit(1);
+            }
+          })();
+          EOF
+
+      # 5. 无论成败都把截图和测试报告提交回仓库
+      - name: 上传截图到仓库
+        if: always()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "自动化截图：95598 登录页 (#${{ github.run_number }})"
+          file_pattern: "screenshots/*.png test-result.json"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # 6. 若页面打开失败，让整个 Workflow 标红告警
+      - name: 检查测试是否通过
+        if: always()
+        run: |
+          node -e "
+            const r = require('./test-result.json');
+            if (!r.success) {
+              console.error('❌ 页面打开失败：' + (r.error || ('HTTP ' + r.statusCode)));
+              process.exit(1);
+            }
+            console.log('✅ 页面打开成功');
+          "
