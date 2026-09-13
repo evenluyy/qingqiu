@@ -138,6 +138,15 @@ jobs:
             }
           })();
           EOF
+      - name: 诊断：curl 直连对比
+        run: |
+         echo "--- 跟随重定向的响应头 ---"
+         curl -sIL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0" \
+          --max-time 30 https://www.95598.cn/osgweb/login | head -50
+          echo "--- 最终 HTTP 状态码 ---"
+          curl -s -o /dev/null -w "%{http_code}\n" \
+          -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0" \
+          --max-time 30 https://www.95598.cn/osgweb/login
 
       # 5. 无论成败都把截图和测试报告提交回仓库
       - name: 上传截图到仓库
