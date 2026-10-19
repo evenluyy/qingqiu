@@ -1,10 +1,9 @@
 {
   "url": "https://www.95598.cn/osgweb/login",
-  "time": "2026/9/13 17:38:30",
+  "time": "2026/10/19 10:39:51",
   "success": false,
-  "title": "405",
-  "statusCode": 405,
-  "error": null,
-  "screenshot": "screenshots/95598-login-2026-09-13T09-38-39-897Z.png",
-  "contentLength": 3127
+  "title": null,
+  "statusCode": null,
+  "error": "page.goto: Timeout 90000ms exceeded.\nCall log:\n  - navigating to \"https://www.95598.cn/osgweb/login\", waiting until \"domcontentloaded\"\n",
+  "screenshot": "screenshots/95598-login-2026-10-19T02-41-22-290Z.png"
 }
